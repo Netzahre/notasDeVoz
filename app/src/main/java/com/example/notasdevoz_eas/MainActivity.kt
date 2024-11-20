@@ -14,9 +14,10 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import java.io.IOException
 import android.Manifest
+import android.content.ContentValues
 import android.widget.EditText
 import android.widget.Toast
-import java.io.BufferedReader
+import com.example.cuestionario_20.SQLiteHelper
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
@@ -32,6 +33,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var estadoTextView: TextView
     private lateinit var nombreGrabacion: EditText
     private lateinit var borrarGrabacion : Button
+    private lateinit var nombreUsuario : TextView
+    private lateinit var nombreNotaTextView : TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,8 +51,16 @@ class MainActivity : AppCompatActivity() {
         detenerGrabarButton = findViewById(R.id.button2)
         reproducirButton = findViewById(R.id.button3)
         estadoTextView = findViewById(R.id.tv1)
+        nombreNotaTextView = findViewById(R.id.nombreNota)
         nombreGrabacion = findViewById(R.id.nombreGrab)
         borrarGrabacion = findViewById(R.id.button4)
+        nombreUsuario = findViewById(R.id.user)
+
+        val bundle = intent.extras
+        if (bundle != null) {
+            val usuario = bundle.getString("usuario")
+            nombreUsuario.text = "$usuario"
+        }
 
         // Configura la visibilidad de los botones iniciales
         detenerGrabarButton.isEnabled = false
@@ -79,6 +90,10 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, texto, Toast.LENGTH_SHORT).show()
     }
 
+    private fun generarNombreArchivo(usuario: String, nombreNota: String): String {
+        return "${externalCacheDir?.absolutePath}/${usuario}${nombreNota}.3gp"
+    }
+
     // Función para verificar y solicitar permisos
     private fun solicitarPermisos() {
         val permisos = arrayOf(
@@ -96,19 +111,39 @@ class MainActivity : AppCompatActivity() {
 
     // Función para iniciar la grabación de audio
     private fun iniciarGrabacion(nombreGrab: EditText) {
+        val usuario = nombreUsuario.text.toString()
+        if (nombreGrab.text.isEmpty()) {
+            mostrarToast("Introduzca el nombre de la nota de voz.")
+            return
+        }
+        val nombreNota = nombreGrab.text.toString()
+        audioFilePath = generarNombreArchivo(usuario, nombreNota)
+
+        val admin = SQLiteHelper(this, "admin", null, 1)
+        val bd = admin.writableDatabase
+        val filas = bd.rawQuery("select * from UsuariosNotas where usuario = '$usuario' and nombreNota = '$nombreNota'", null)
+        if (filas.moveToFirst()) {
+            mostrarToast("Ya existe una nota de voz con ese nombre.")
+            return
+        }
+        val registroNota = ContentValues().apply {
+            put("usuario", usuario)
+            put("nombreNota", nombreNota)
+        }
+        bd.insert("UsuariosNotas", null, registroNota)
+        bd.close()
+
+        //iniciamos el mediaRecorder
         mediaRecorder = MediaRecorder().apply {
             setAudioSource(MediaRecorder.AudioSource.MIC) // Fuente de audio
             setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP) // Formato de salida
             setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB) // Codificador de audio
             setOutputFile(audioFilePath) // Ruta del archivo de salida
-            if (nombreGrab.text.isEmpty()) {
-                mostrarToast("Introduzca el nombre de la nota de voz.")
-                return
-            }
-            audioFilePath = "${externalCacheDir?.absolutePath}/${nombreGrabacion.text}.3gp"
+
             try {
                 prepare() // Prepara el MediaRecorder
                 start() // Inicia la grabación
+                nombreNotaTextView.text = "Nota de voz: $nombreNota"
                 estadoTextView.text = "Grabando..."
                 grabarButton.isEnabled = false
                 detenerGrabarButton.isEnabled = true
@@ -126,7 +161,8 @@ class MainActivity : AppCompatActivity() {
             release() // Libera los recursos
         }
         mediaRecorder = null
-        estadoTextView.text = "Grabación detenida."
+        nombreNotaTextView.text = "Nombre nota de voz"
+        estadoTextView.text = "Grabación detenida y guardada."
         grabarButton.isEnabled = true
         detenerGrabarButton.isEnabled = false
         reproducirButton.isEnabled = true
@@ -134,20 +170,34 @@ class MainActivity : AppCompatActivity() {
 
     // Función para reproducir la grabación de audio
     private fun reproducirGrabacion(nombreGrab: EditText) {
-        audioFilePath = "${externalCacheDir?.absolutePath}/${nombreGrabacion.text}.3gp"
+        val usuario = nombreUsuario.text.toString()
         if (nombreGrab.text.isEmpty()) {
             mostrarToast("Introduzca el nombre de la nota de voz.")
             return
         }
+        val nombreNota = nombreGrab.text.toString()
+
+        val admin = SQLiteHelper(this, "admin", null, 1)
+        val bd = admin.writableDatabase
+        val filas = bd.rawQuery("select * from UsuariosNotas where usuario = '$usuario' and nombreNota = '$nombreNota'", null)
+        if (!filas.moveToFirst()) {
+            mostrarToast("No existe una nota de voz con ese nombre.")
+            return
+        }
+        audioFilePath = generarNombreArchivo(usuario, nombreNota)
+
         mediaPlayer = MediaPlayer().apply {
+
             try {
                 setDataSource(audioFilePath) // Configura la fuente de datos (archivo de audio)
                 prepare() // Prepara el MediaPlayer
                 start() // Inicia la reproducción
+                nombreNotaTextView.text = "Nota de voz: $nombreNota"
                 estadoTextView.text = "Reproduciendo..."
-    // Cambia el estado del TextView cuando finaliza la reproducción
+                // Cambia el estado del TextView cuando finaliza la reproducción
                 setOnCompletionListener {
                     estadoTextView.text = "Reproducción finalizada."
+                    nombreNotaTextView.text = "Nombre nota de voz"
                 }
             } catch (e: IOException) {
                 e.printStackTrace()
@@ -156,11 +206,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun borrarGrabacion(nombreGrab: EditText) {
+        val usuario = nombreUsuario.text.toString()
         if (nombreGrab.text.isEmpty()) {
             mostrarToast("Introduzca el nombre de la nota de voz.")
             return
         }
-        audioFilePath = "${externalCacheDir?.absolutePath}/${nombreGrabacion.text}.3gp"
+        val nombreNota = nombreGrab.text.toString()
+        audioFilePath = generarNombreArchivo(usuario, nombreNota)
+
+        val admin = SQLiteHelper(this, "admin", null, 1)
+        val bd = admin.writableDatabase
+        val filas = bd.rawQuery("select * from UsuariosNotas where usuario = '$usuario' and nombreNota = '$nombreNota'", null)
+        if (!filas.moveToFirst()) {
+            mostrarToast("No existe una nota de voz con ese nombre.")
+            return
+        }
+
+        bd.delete("UsuariosNotas", "usuario = '$usuario' and nombreNota = '$nombreNota'", null)
+        bd.close()
+
         val archivoAudio = File(audioFilePath)
         if (archivoAudio.exists()) {
             // Intentar borrar el archivo
